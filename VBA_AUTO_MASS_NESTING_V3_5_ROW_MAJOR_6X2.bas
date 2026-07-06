@@ -2,7 +2,7 @@ Option Explicit
 
 '==========================================================
 ' PROJECT HADES
-' HADES AUTO MASS NESTING V3.5 - ROW MAJOR 6x2 + AUTO RENAME
+' HADES AUTO MASS NESTING V4.0 - BOX-MAJOR 6 BOX HORIZONTAL + AUTO RENAME
 '
 ' SHORTCUT UTAMA:
 ' HADES_AUTO_MASS_NESTING
@@ -13,7 +13,7 @@ Option Explicit
 ' HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME
 '
 ' BASIS:
-' HADES AUTO MASS NESTING V2 SAFE BUCKET yang sudah working.
+' HADES AUTO MASS NESTING V3.5 SAFE BUCKET + AUTO RENAME yang sudah working.
 '
 ' FUNGSI:
 ' - Membaca Documents\Order.txt sebagai record lengkap:
@@ -22,7 +22,9 @@ Option Explicit
 ' - Mencari source panel dari selection loose master
 ' - Duplicate panel sesuai setiap baris Order.txt
 ' - Auto rename placeholder active text pada duplicate sebelum nesting
-' - Menyusun hasil duplicate ke area 178 x 255 cm
+' - Menyusun hasil duplicate ke BOX produksi 178 x 255 cm
+' - Maksimal 6 BOX ke samping; BOX ke-7 turun ke baris berikutnya
+' - Isi box diprioritaskan homogen berdasarkan size + bucket + panel_no
 ' - Output diletakkan di atas ActivePage, bukan di kanan selection
 ' - Gap antar panel 1 cm
 '
@@ -34,6 +36,8 @@ Option Explicit
 ' - Support Japanese/CJK font fallback.
 ' - Skip IDPO kecil / angka PO 6 digit kecil / marker @A: dan @ATTR:.
 ' - Output anchor mengikuti konsep Auto Duplicate: di atas ActivePage.
+' - Pattern Catalog V3.3 bisa memberi UID marker sementara pada Shape.Name.
+' - Setelah nesting sukses, marker HADES_PC_UID otomatis dibersihkan.
 ' - Tetap tidak mengubah rotasi.
 ' - Tetap tidak menembus group panel untuk pergerakan; recursive scan hanya untuk mengganti active text.
 '
@@ -51,8 +55,11 @@ Private Const HAMN_AREA_H As Double = 255#
 Private Const HAMN_GAP As Double = 1#
 
 Private Const HAMN_AREA_SPACING As Double = 10#
-Private Const HAMN_GRID_COLS As Long = 6
-Private Const HAMN_GRID_ROWS As Long = 2
+Private Const HAMN_GRID_COLS As Long = 6 'Legacy alias; V4 memakai HAMN_BOX_COLS.
+Private Const HAMN_GRID_ROWS As Long = 2 'Legacy; tidak dipakai sebagai panel grid.
+Private Const HAMN_BOX_COLS As Long = 6
+Private Const HAMN_BOX_ROW_SPACING As Double = 15#
+Private Const HAMN_MARK_PREFIX As String = "HADES_PC_UID|"
 Private Const HAMN_OUTPUT_OFFSET_RIGHT As Double = 10# 'Legacy; tidak dipakai di V3.1 page anchor.
 Private Const HAMN_PAGE_TOP_OFFSET As Double = 210#
 Private Const HAMN_PAGE_CENTER_X_CORRECTION As Double = 0#
@@ -113,6 +120,8 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
     Dim catType() As String
     Dim catName() As String
     Dim catBucket() As String
+    Dim catUID() As String
+    Dim catOrigName() As String
 
     Dim orderN As Long
     Dim orderSize() As String
@@ -134,6 +143,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
     Dim srcW() As Double
     Dim srcH() As Double
     Dim srcUsed() As Boolean
+    Dim srcUID() As String
 
     Dim outN As Long
     Dim outShapes() As Shape
@@ -181,7 +191,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
     HAMN_CJKFontFailedCount = 0
 
     If ActiveDocument Is Nothing Then
-        MsgBox "Tidak ada dokumen aktif.", vbExclamation, "Hades Auto Mass Nesting V3.5"
+        MsgBox "Tidak ada dokumen aktif.", vbExclamation, "Hades Auto Mass Nesting V4"
         Exit Sub
     End If
 
@@ -192,7 +202,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
                "2. Ungroup sekali." & vbCrLf & _
                "3. Select semua panel master loose." & vbCrLf & _
                "4. Jalankan Auto Mass Nesting V3.", _
-               vbExclamation, "Hades Auto Mass Nesting V3.5"
+               vbExclamation, "Hades Auto Mass Nesting V4"
         Exit Sub
     End If
 
@@ -208,7 +218,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
                "File yang dicari:" & vbCrLf & _
                catalogPath & vbCrLf & vbCrLf & _
                "Jalankan HADES_RECORD_PATTERN_CATALOG dulu.", _
-               vbCritical, "Hades Auto Mass Nesting V3.5"
+               vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
@@ -217,19 +227,19 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
         MsgBox "Order.txt belum ditemukan." & vbCrLf & vbCrLf & _
                "File yang dicari:" & vbCrLf & _
                orderPath, _
-               vbCritical, "Hades Auto Mass Nesting V3.5"
+               vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
 
-    If Not HAMN_LoadCatalog(catalogPath, catN, catSize, catPanelNo, catW, catH, catType, catName, catBucket) Then
-        MsgBox "Gagal membaca Pattern Catalog.", vbCritical, "Hades Auto Mass Nesting V3.5"
+    If Not HAMN_LoadCatalog(catalogPath, catN, catSize, catPanelNo, catW, catH, catType, catName, catBucket, catUID, catOrigName) Then
+        MsgBox "Gagal membaca Pattern Catalog.", vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
 
     If catN = 0 Then
-        MsgBox "Pattern Catalog kosong / tidak ada panel.", vbCritical, "Hades Auto Mass Nesting V3.5"
+        MsgBox "Pattern Catalog kosong / tidak ada panel.", vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
@@ -241,7 +251,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
         MsgBox "AUTO MASS NESTING DIBATALKAN." & vbCrLf & vbCrLf & _
                "Ada panel yang lebih besar dari area 178 x 255 cm:" & vbCrLf & vbCrLf & _
                hardError, _
-               vbCritical, "Hades Auto Mass Nesting V3.5"
+               vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
@@ -253,13 +263,13 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
     orderSeqMap.CompareMode = 1
 
     If Not HAMN_LoadOrderRecords(orderPath, orderN, orderSize, orderName, orderNo, orderNick, orderQty, orderSeqMap) Then
-        MsgBox "Gagal membaca Order.txt.", vbCritical, "Hades Auto Mass Nesting V3.5"
+        MsgBox "Gagal membaca Order.txt.", vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
 
     If orderN = 0 Or orderQty.Count = 0 Then
-        MsgBox "Order.txt tidak berisi record order valid.", vbCritical, "Hades Auto Mass Nesting V3.5"
+        MsgBox "Order.txt tidak berisi record order valid.", vbCritical, "Hades Auto Mass Nesting V4"
         ActiveDocument.Unit = oldUnit
         Exit Sub
     End If
@@ -306,12 +316,14 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
     ReDim srcW(1 To srcN)
     ReDim srcH(1 To srcN)
     ReDim srcUsed(1 To srcN)
+    ReDim srcUID(1 To srcN)
 
     For i = 1 To srcN
         Set srcShapes(i) = sr.Shapes(i)
         srcW(i) = srcShapes(i).SizeWidth
         srcH(i) = srcShapes(i).SizeHeight
         srcUsed(i) = False
+        srcUID(i) = HAMN_ExtractPatternUID(srcShapes(i).Name)
     Next i
 
     HAMN_GetAccuratePageAnchor pageCenterX, pageTopY, anchorMethod
@@ -322,7 +334,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
     baseLeft = pageCenterX - (HAMN_AREA_W / 2#) + HAMN_PAGE_CENTER_X_CORRECTION
     baseTop = pageTopY + HAMN_PAGE_TOP_OFFSET + HAMN_AREA_H + HAMN_PAGE_TOP_Y_CORRECTION
 
-    ActiveDocument.BeginCommandGroup "HADES AUTO MASS NESTING V3.5 ROW MAJOR 6x2"
+    ActiveDocument.BeginCommandGroup "HADES AUTO MASS NESTING V4 BOX-MAJOR"
     cmdStarted = True
 
     outN = 0
@@ -343,7 +355,7 @@ Public Sub HADES_AUTO_MASS_NESTING_V3_AUTO_RENAME()
             GoTo NextCatalogItem
         End If
 
-        srcIdx = HAMN_FindMatchingSource(catW(i), catH(i), srcN, srcW, srcH, srcUsed)
+        srcIdx = HAMN_FindMatchingSourceSmart(catUID(i), catW(i), catH(i), srcN, srcW, srcH, srcUID, srcUsed)
 
         If srcIdx = 0 Then
             warn = warn & "- FAIL: Source panel tidak ditemukan untuk " & _
@@ -403,7 +415,7 @@ NextCatalogItem:
         If cmdStarted Then ActiveDocument.EndCommandGroup
         ActiveDocument.Unit = oldUnit
         MsgBox "Tidak ada panel yang berhasil dibuat." & vbCrLf & vbCrLf & _
-               warn, vbCritical, "Hades Auto Mass Nesting V3.5"
+               warn, vbCritical, "Hades Auto Mass Nesting V4"
         Exit Sub
     End If
 
@@ -417,16 +429,20 @@ NextCatalogItem:
     '======================================================
     usedAreaCount = HAMN_LayoutShelf(outN, outShapes, outW, outH, outLabel, outBucket, baseLeft, baseTop, logText, warn)
 
+    If outN <> expectedPanels Then
+        warn = warn & "- FAIL: Total panel placed tidak sama dengan expected. Expected=" & _
+                      CStr(expectedPanels) & ", Placed=" & CStr(outN) & vbCrLf
+    End If
+
+    If InStr(1, warn, "- FAIL:", vbTextCompare) = 0 Then
+        HAMN_CleanPatternMarkersFromDocument logText
+    End If
+
     logText = "OUTPUT_ANCHOR|ABOVE_ACTIVE_PAGE|METHOD=" & anchorMethod & _
               "|PAGE_CENTER_X=" & HAMN_DblToStr(pageCenterX) & _
               "|PAGE_TOP_Y=" & HAMN_DblToStr(pageTopY) & _
               "|BASE_LEFT=" & HAMN_DblToStr(baseLeft) & _
               "|BASE_TOP=" & HAMN_DblToStr(baseTop) & vbCrLf & logText
-
-    If outN <> expectedPanels Then
-        warn = warn & "- FAIL: Total panel placed tidak sama dengan expected. Expected=" & _
-                      CStr(expectedPanels) & ", Placed=" & CStr(outN) & vbCrLf
-    End If
 
     If cmdStarted Then ActiveDocument.EndCommandGroup
 
@@ -436,21 +452,21 @@ NextCatalogItem:
                      recNameR, recNumR, recNickR, orderQty, catPanelCountBySize, _
                      totalNameR, totalNumR, totalNickR, warn, logText
 
-    MsgBox "HADES AUTO MASS NESTING V3 selesai." & vbCrLf & vbCrLf & _
+    MsgBox "HADES AUTO MASS NESTING V4 selesai." & vbCrLf & vbCrLf & _
            "Order records       : " & orderN & vbCrLf & _
            "Expected panel      : " & expectedPanels & vbCrLf & _
            "Panel hasil duplicate: " & outN & vbCrLf & _
-           "Blok terpakai       : " & usedAreaCount & vbCrLf & _
+           "Box terpakai        : " & usedAreaCount & vbCrLf & _
            "Area size           : 178 x 255 cm" & vbCrLf & _
            "Output              : di atas ActivePage" & vbCrLf & _
            "Jarak dari page     : 210 cm" & vbCrLf & _
            "Gap                 : 1 cm" & vbCrLf & _
-           "Mode                : SAFE BUCKET + AUTO RENAME + ROW-MAJOR 6x2" & vbCrLf & _
+           "Mode                : SAFE BUCKET + AUTO RENAME + BOX-MAJOR 6 BOX" & vbCrLf & _
            "Rename nama/nomor/nick: " & totalNameR & "/" & totalNumR & "/" & totalNickR & vbCrLf & vbCrLf & _
            "Report:" & vbCrLf & _
            reportPath & vbCrLf & vbCrLf & _
            IIf(warn <> "", "STATUS: WARNING / FAIL. Cek report.", "STATUS: PASS."), _
-           vbInformation, "Hades Auto Mass Nesting V3.5"
+           vbInformation, "Hades Auto Mass Nesting V4"
 
     Exit Sub
 
@@ -460,8 +476,8 @@ ErrHandler:
     If cmdStarted Then ActiveDocument.EndCommandGroup
     ActiveDocument.Unit = oldUnit
 
-    MsgBox "ERROR HADES_AUTO_MASS_NESTING_V3:" & vbCrLf & _
-           err.Description, vbCritical, "Hades Auto Mass Nesting V3.5"
+    MsgBox "ERROR HADES_AUTO_MASS_NESTING_V4:" & vbCrLf & _
+           err.Description, vbCritical, "Hades Auto Mass Nesting V4"
 
 End Sub
 
@@ -479,7 +495,9 @@ Private Function HAMN_LoadCatalog( _
     ByRef catH() As Double, _
     ByRef catType() As String, _
     ByRef catName() As String, _
-    ByRef catBucket() As String _
+    ByRef catBucket() As String, _
+    ByRef catUID() As String, _
+    ByRef catOrigName() As String _
 ) As Boolean
 
     On Error GoTo ErrHandler
@@ -516,6 +534,8 @@ Private Function HAMN_LoadCatalog( _
                         ReDim catType(1 To catN)
                         ReDim catName(1 To catN)
                         ReDim catBucket(1 To catN)
+                        ReDim catUID(1 To catN)
+                        ReDim catOrigName(1 To catN)
                     Else
                         ReDim Preserve catSize(1 To catN)
                         ReDim Preserve catPanelNo(1 To catN)
@@ -524,6 +544,8 @@ Private Function HAMN_LoadCatalog( _
                         ReDim Preserve catType(1 To catN)
                         ReDim Preserve catName(1 To catN)
                         ReDim Preserve catBucket(1 To catN)
+                        ReDim Preserve catUID(1 To catN)
+                        ReDim Preserve catOrigName(1 To catN)
                     End If
 
                     catSize(catN) = HAMN_NormalizeSize(p(1))
@@ -547,6 +569,17 @@ Private Function HAMN_LoadCatalog( _
                         catBucket(catN) = HAMN_NormalizeBucket(CStr(p(7)))
                     Else
                         catBucket(catN) = ""
+                    End If
+
+                    'Pattern Catalog V3.3+ menaruh UID dan original name di field akhir.
+                    catUID(catN) = ""
+                    catOrigName(catN) = catName(catN)
+
+                    If UBound(p) >= 15 Then catUID(catN) = CStr(p(15))
+                    If UBound(p) >= 16 Then catOrigName(catN) = CStr(p(16))
+
+                    If catUID(catN) = "" Then
+                        catUID(catN) = HAMN_BuildLegacyUID(catSize(catN), catBucket(catN), catPanelNo(catN))
                     End If
 
                 End If
@@ -877,7 +910,40 @@ End Function
 ' MATCH SOURCE PANEL
 '==========================================================
 
-Private Function HAMN_FindMatchingSource( _
+Private Function HAMN_FindMatchingSourceSmart( _
+    ByVal targetUID As String, _
+    ByVal targetW As Double, _
+    ByVal targetH As Double, _
+    ByVal srcN As Long, _
+    ByRef srcW() As Double, _
+    ByRef srcH() As Double, _
+    ByRef srcUID() As String, _
+    ByRef srcUsed() As Boolean _
+) As Long
+
+    Dim i As Long
+
+    targetUID = Trim$(targetUID)
+
+    'Prioritas utama V4: cocokkan source panel dengan UID sementara dari Pattern Catalog.
+    If targetUID <> "" Then
+        For i = 1 To srcN
+            If Not srcUsed(i) Then
+                If UCase$(Trim$(srcUID(i))) = UCase$(targetUID) Then
+                    HAMN_FindMatchingSourceSmart = i
+                    Exit Function
+                End If
+            End If
+        Next i
+    End If
+
+    'Fallback kompatibel: catalog lama / marker hilang masih bisa mencari dari dimensi.
+    HAMN_FindMatchingSourceSmart = HAMN_FindMatchingSourceByDimension(targetW, targetH, srcN, srcW, srcH, srcUsed)
+
+End Function
+
+
+Private Function HAMN_FindMatchingSourceByDimension( _
     ByVal targetW As Double, _
     ByVal targetH As Double, _
     ByVal srcN As Long, _
@@ -915,8 +981,36 @@ Private Function HAMN_FindMatchingSource( _
 
     Next i
 
-    HAMN_FindMatchingSource = bestIdx
+    HAMN_FindMatchingSourceByDimension = bestIdx
 
+End Function
+
+
+Private Function HAMN_ExtractPatternUID(ByVal shapeName As String) As String
+
+    Dim s As String
+    Dim p() As String
+
+    s = CStr(shapeName)
+
+    If UCase$(Left$(s, Len(HAMN_MARK_PREFIX))) <> UCase$(HAMN_MARK_PREFIX) Then
+        HAMN_ExtractPatternUID = ""
+        Exit Function
+    End If
+
+    p = Split(s, "|")
+
+    If UBound(p) >= 1 Then
+        HAMN_ExtractPatternUID = CStr(p(1))
+    Else
+        HAMN_ExtractPatternUID = ""
+    End If
+
+End Function
+
+
+Private Function HAMN_BuildLegacyUID(ByVal sz As String, ByVal bucket As String, ByVal panelNo As Long) As String
+    HAMN_BuildLegacyUID = HAMN_NormalizeSize(sz) & "_" & HAMN_NormalizeBucket(bucket) & "_P" & Format$(panelNo, "000")
 End Function
 
 
@@ -1447,7 +1541,11 @@ Private Function HAMN_ShouldSwapOutput( _
 
     Dim pi As Long
     Dim pj As Long
+    Dim ki As String
+    Dim kj As String
 
+    'V4: yang penting adalah homogen box. Jangan sort murni area karena copy
+    'dengan nama panjang bisa berubah bounding box dan tercerai dari saudara panelnya.
     pi = HAMN_BucketPriority(outBucket(i))
     pj = HAMN_BucketPriority(outBucket(j))
 
@@ -1456,17 +1554,23 @@ Private Function HAMN_ShouldSwapOutput( _
         Exit Function
     End If
 
-    If pj = pi Then
-        If outArea(j) > outArea(i) Then
+    If pj > pi Then
+        HAMN_ShouldSwapOutput = False
+        Exit Function
+    End If
+
+    ki = HAMN_OutputGroupKey(outLabel(i))
+    kj = HAMN_OutputGroupKey(outLabel(j))
+
+    If kj < ki Then
+        HAMN_ShouldSwapOutput = True
+        Exit Function
+    End If
+
+    If kj = ki Then
+        If outLabel(j) < outLabel(i) Then
             HAMN_ShouldSwapOutput = True
             Exit Function
-        End If
-
-        If outArea(j) = outArea(i) Then
-            If outLabel(j) < outLabel(i) Then
-                HAMN_ShouldSwapOutput = True
-                Exit Function
-            End If
         End If
     End If
 
@@ -1562,48 +1666,49 @@ Private Function HAMN_LayoutShelf( _
 ) As Long
 
     '======================================================
-    ' V3.5 ROW-MAJOR 6 x 2
+    ' V4 BOX-MAJOR NESTING
     '
-    ' Yang dimaksud 2 row:
-    '   ROW 1 : item 1, 2, 3, 4, 5, 6
-    '   ROW 2 : item 7, 8, 9, 10, 11, 12
+    ' BUKAN 6 panel ke samping.
+    ' Yang dibatasi adalah 6 BOX produksi ke samping.
     '
-    ' Bukan zig-zag:
-    '   1 atas, 2 bawah, 3 atas, 4 bawah, dst.
+    ' BOX 1..6  : satu baris horizontal.
+    ' BOX 7..12 : turun ke baris berikutnya.
     '
-    ' Setelah 12 item, lanjut blok berikutnya secara horizontal.
-    ' Movement tetap pakai bounding box top-left dan tidak menembus group.
+    ' Isi box diprioritaskan homogen:
+    '   SIZE + BUCKET + PANEL_NO
+    '
+    ' BODY XS-XL  : maksimal 3 kolom, tetap dicek agar tidak melewati 178 cm.
+    ' BODY > XL   : maksimal 2 kolom.
+    ' SLEEVE/SMALL: kolom otomatis dari ukuran panel dan batas 178 cm.
     '======================================================
 
-    Dim blockStart As Long
-    Dim blockEnd As Long
-    Dim slotCount As Long
-    Dim localIdx As Long
+    Dim groupStart As Long
+    Dim groupEnd As Long
+    Dim groupKey As String
+    Dim maxW As Double
+    Dim maxH As Double
+    Dim i As Long
+    Dim j As Long
+
+    Dim autoCols As Long
+    Dim maxCols As Long
+    Dim maxRows As Long
+    Dim capacity As Long
+
+    Dim boxIndex As Long
+    Dim boxCol As Long
+    Dim boxRow As Long
+    Dim boxLeft As Double
+    Dim boxTop As Double
+    Dim itemInBox As Long
     Dim rowIdx As Long
     Dim colIdx As Long
-
-    Dim i As Long
-    Dim c As Long
-    Dim r As Long
-
-    Dim colW(0 To 5) As Double
-    Dim rowH(0 To 1) As Double
-    Dim colX(0 To 5) As Double
-    Dim rowY(0 To 1) As Double
-
-    Dim usedCols As Long
-    Dim usedRows As Long
-    Dim blockW As Double
-    Dim blockH As Double
-    Dim blockLeft As Double
-    Dim blockOffsetX As Double
-
-    Dim w As Double
-    Dim h As Double
     Dim targetLeft As Double
     Dim targetTop As Double
-
-    Dim blockIndex As Long
+    Dim boxStart As Long
+    Dim boxEnd As Long
+    Dim bucket As String
+    Dim sz As String
 
     logText = ""
 
@@ -1612,134 +1717,238 @@ Private Function HAMN_LayoutShelf( _
         Exit Function
     End If
 
-    blockStart = 1
-    blockIndex = 1
-    blockOffsetX = 0#
+    groupStart = 1
+    boxIndex = 0
 
-    Do While blockStart <= outN
+    Do While groupStart <= outN
 
-        blockEnd = blockStart + (HAMN_GRID_COLS * HAMN_GRID_ROWS) - 1
-        If blockEnd > outN Then blockEnd = outN
+        groupKey = HAMN_OutputGroupKey(outLabel(groupStart))
+        bucket = outBucket(groupStart)
+        sz = HAMN_LabelSize(outLabel(groupStart))
 
-        slotCount = blockEnd - blockStart + 1
+        groupEnd = groupStart
+        Do While groupEnd < outN
+            If HAMN_OutputGroupKey(outLabel(groupEnd + 1)) <> groupKey Then Exit Do
+            groupEnd = groupEnd + 1
+        Loop
 
-        If slotCount <= HAMN_GRID_COLS Then
-            usedCols = slotCount
-            usedRows = 1
-        Else
-            usedCols = HAMN_GRID_COLS
-            usedRows = 2
+        maxW = 0#
+        maxH = 0#
+        For i = groupStart To groupEnd
+            If outW(i) > maxW Then maxW = outW(i)
+            If outH(i) > maxH Then maxH = outH(i)
+        Next i
+
+        If maxW <= 0# Or maxH <= 0# Then
+            warn = warn & "- FAIL: Dimensi kosong untuk group " & groupKey & vbCrLf
+            groupStart = groupEnd + 1
+            GoTo NextGroup
         End If
 
-        For c = 0 To 5
-            colW(c) = 0#
-            colX(c) = 0#
-        Next c
+        If maxW > HAMN_AREA_W Or maxH > HAMN_AREA_H Then
+            warn = warn & "- FAIL: Panel terlalu besar untuk BOX 178 x 255: " & groupKey & _
+                          " (" & HAMN_DblToStr(maxW) & " x " & HAMN_DblToStr(maxH) & " cm)" & vbCrLf
+            groupStart = groupEnd + 1
+            GoTo NextGroup
+        End If
 
-        For r = 0 To 1
-            rowH(r) = 0#
-            rowY(r) = 0#
-        Next r
+        autoCols = Int((HAMN_AREA_W + HAMN_GAP) / (maxW + HAMN_GAP))
+        If autoCols < 1 Then autoCols = 1
 
-        'Hitung lebar kolom dan tinggi row berdasarkan item dalam blok 6x2.
-        For i = blockStart To blockEnd
-
-            w = outW(i)
-            h = outH(i)
-
-            If w > HAMN_AREA_W Or h > HAMN_AREA_H Then
-                warn = warn & "- FAIL: Panel terlalu besar untuk area 178 x 255 setelah rename: " & _
-                              outLabel(i) & " (" & HAMN_DblToStr(w) & " x " & HAMN_DblToStr(h) & " cm)" & vbCrLf
-                GoTo NextMeasureItem
+        If UCase$(bucket) = HAMN_BUCKET_BODY Then
+            If HAMN_SizeRank(sz) <= HAMN_SizeRank("XL") Then
+                maxCols = HAMN_MinL(3, autoCols)
+            Else
+                maxCols = HAMN_MinL(2, autoCols)
             End If
-
-            localIdx = i - blockStart
-            rowIdx = localIdx \ HAMN_GRID_COLS
-            colIdx = localIdx Mod HAMN_GRID_COLS
-
-            If w > colW(colIdx) Then colW(colIdx) = w
-            If h > rowH(rowIdx) Then rowH(rowIdx) = h
-
-NextMeasureItem:
-        Next i
-
-        'Offset kolom.
-        colX(0) = 0#
-        For c = 1 To usedCols - 1
-            colX(c) = colX(c - 1) + colW(c - 1) + HAMN_GAP
-        Next c
-
-        'Offset row.
-        rowY(0) = 0#
-        If usedRows > 1 Then
-            rowY(1) = rowH(0) + HAMN_GAP
-        End If
-
-        blockW = 0#
-        If usedCols > 0 Then
-            For c = 0 To usedCols - 1
-                blockW = blockW + colW(c)
-            Next c
-            blockW = blockW + ((usedCols - 1) * HAMN_GAP)
-        End If
-
-        blockH = rowH(0)
-        If usedRows > 1 Then
-            blockH = rowH(0) + HAMN_GAP + rowH(1)
-        End If
-
-        'Tetap catat jika blok 6 kolom secara fisik lebih besar dari area 178.
-        'Tidak dipecah zig-zag supaya perilaku sesuai request: row-major 6x2.
-        If blockW > HAMN_AREA_W Then
-            warn = warn & "- WARNING: Blok " & CStr(blockIndex) & _
-                          " row-major 6 kolom melebihi lebar 178 cm. Width=" & _
-                          HAMN_DblToStr(blockW) & " cm." & vbCrLf
-        End If
-
-        If blockH > HAMN_AREA_H Then
-            warn = warn & "- WARNING: Blok " & CStr(blockIndex) & _
-                          " row-major 2 row melebihi tinggi 255 cm. Height=" & _
-                          HAMN_DblToStr(blockH) & " cm." & vbCrLf
-        End If
-
-        blockLeft = baseLeft + blockOffsetX
-
-        'Place item row-major:
-        '1-6 di row atas, 7-12 di row bawah.
-        For i = blockStart To blockEnd
-
-            localIdx = i - blockStart
-            rowIdx = localIdx \ HAMN_GRID_COLS
-            colIdx = localIdx Mod HAMN_GRID_COLS
-
-            targetLeft = blockLeft + colX(colIdx)
-            targetTop = baseTop - rowY(rowIdx)
-
-            HAMN_MoveShapeTopLeft outShapes(i), targetLeft, targetTop
-
-            logText = logText & _
-                      "BLOCK " & CStr(blockIndex) & " | " & _
-                      "ROW " & CStr(rowIdx + 1) & " COL " & CStr(colIdx + 1) & " | " & _
-                      outBucket(i) & " | " & _
-                      outLabel(i) & " | " & _
-                      HAMN_DblToStr(outW(i)) & " x " & HAMN_DblToStr(outH(i)) & _
-                      " | X=" & HAMN_DblToStr(colX(colIdx)) & _
-                      " Y=" & HAMN_DblToStr(rowY(rowIdx)) & vbCrLf
-
-        Next i
-
-        If blockW <= 0# Then
-            blockOffsetX = blockOffsetX + HAMN_AREA_W + HAMN_AREA_SPACING
         Else
-            blockOffsetX = blockOffsetX + blockW + HAMN_AREA_SPACING
+            maxCols = autoCols
         End If
 
-        blockStart = blockEnd + 1
-        blockIndex = blockIndex + 1
+        If maxCols < 1 Then maxCols = 1
 
+        maxRows = Int((HAMN_AREA_H + HAMN_GAP) / (maxH + HAMN_GAP))
+        If maxRows < 1 Then maxRows = 1
+
+        capacity = maxCols * maxRows
+        If capacity < 1 Then capacity = 1
+
+        boxStart = groupStart
+        Do While boxStart <= groupEnd
+
+            boxEnd = boxStart + capacity - 1
+            If boxEnd > groupEnd Then boxEnd = groupEnd
+
+            boxIndex = boxIndex + 1
+            boxCol = (boxIndex - 1) Mod HAMN_BOX_COLS
+            boxRow = (boxIndex - 1) \ HAMN_BOX_COLS
+
+            boxLeft = baseLeft + (boxCol * (HAMN_AREA_W + HAMN_AREA_SPACING))
+            boxTop = baseTop - (boxRow * (HAMN_AREA_H + HAMN_BOX_ROW_SPACING))
+
+            logText = logText & "BOX " & CStr(boxIndex) & " | " & groupKey & _
+                      " | SIZE=" & sz & _
+                      " | BUCKET=" & bucket & _
+                      " | MAX_COLS=" & CStr(maxCols) & _
+                      " | MAX_ROWS=" & CStr(maxRows) & _
+                      " | CAPACITY=" & CStr(capacity) & _
+                      " | BOX_LEFT=" & HAMN_DblToStr(boxLeft) & _
+                      " | BOX_TOP=" & HAMN_DblToStr(boxTop) & vbCrLf
+
+            For i = boxStart To boxEnd
+
+                itemInBox = i - boxStart
+                rowIdx = itemInBox \ maxCols
+                colIdx = itemInBox Mod maxCols
+
+                targetLeft = boxLeft + (colIdx * (maxW + HAMN_GAP))
+                targetTop = boxTop - (rowIdx * (maxH + HAMN_GAP))
+
+                HAMN_MoveShapeTopLeft outShapes(i), targetLeft, targetTop
+
+                logText = logText & _
+                          "  ITEM | BOX " & CStr(boxIndex) & _
+                          " | ROW " & CStr(rowIdx + 1) & _
+                          " COL " & CStr(colIdx + 1) & " | " & _
+                          outBucket(i) & " | " & _
+                          outLabel(i) & " | " & _
+                          HAMN_DblToStr(outW(i)) & " x " & HAMN_DblToStr(outH(i)) & _
+                          " | X=" & HAMN_DblToStr(targetLeft) & _
+                          " Y=" & HAMN_DblToStr(targetTop) & vbCrLf
+
+            Next i
+
+            boxStart = boxEnd + 1
+
+        Loop
+
+        groupStart = groupEnd + 1
+
+NextGroup:
     Loop
 
-    HAMN_LayoutShelf = blockIndex - 1
+    HAMN_LayoutShelf = boxIndex
+
+End Function
+
+
+Private Function HAMN_OutputGroupKey(ByVal label As String) As String
+
+    Dim p As Long
+
+    p = InStr(1, label, "_COPY", vbTextCompare)
+    If p > 1 Then
+        HAMN_OutputGroupKey = Left$(label, p - 1)
+    Else
+        HAMN_OutputGroupKey = label
+    End If
+
+End Function
+
+
+Private Function HAMN_LabelSize(ByVal label As String) As String
+
+    Dim p As Long
+    p = InStr(1, label, "_", vbTextCompare)
+
+    If p > 1 Then
+        HAMN_LabelSize = HAMN_NormalizeSize(Left$(label, p - 1))
+    Else
+        HAMN_LabelSize = ""
+    End If
+
+End Function
+
+
+Private Function HAMN_SizeRank(ByVal sz As String) As Long
+
+    Select Case HAMN_NormalizeSize(sz)
+        Case "XXS": HAMN_SizeRank = 1
+        Case "XS": HAMN_SizeRank = 2
+        Case "S": HAMN_SizeRank = 3
+        Case "M": HAMN_SizeRank = 4
+        Case "L": HAMN_SizeRank = 5
+        Case "XL": HAMN_SizeRank = 6
+        Case "2XL": HAMN_SizeRank = 7
+        Case "3XL": HAMN_SizeRank = 8
+        Case "4XL": HAMN_SizeRank = 9
+        Case "5XL": HAMN_SizeRank = 10
+        Case "6XL": HAMN_SizeRank = 11
+        Case Else: HAMN_SizeRank = 999
+    End Select
+
+End Function
+
+
+Private Function HAMN_MinL(ByVal a As Long, ByVal b As Long) As Long
+    If a < b Then
+        HAMN_MinL = a
+    Else
+        HAMN_MinL = b
+    End If
+End Function
+
+
+Private Sub HAMN_CleanPatternMarkersFromDocument(ByRef logText As String)
+
+    On Error Resume Next
+
+    Dim p As Page
+    Dim lyr As Layer
+    Dim cleaned As Long
+
+    For Each p In ActiveDocument.Pages
+        For Each lyr In p.Layers
+            HAMN_CleanPatternMarkersInShapes lyr.Shapes, cleaned
+        Next lyr
+    Next p
+
+    logText = logText & "MARKER_CLEANUP|HADES_PC_UID_CLEANED=" & CStr(cleaned) & vbCrLf
+
+End Sub
+
+
+Private Sub HAMN_CleanPatternMarkersInShapes(ByVal shps As Shapes, ByRef cleaned As Long)
+
+    On Error Resume Next
+
+    Dim s As Shape
+    Dim c As Shape
+    Dim pcShapes As Shapes
+
+    For Each s In shps
+
+        If UCase$(Left$(s.Name, Len(HAMN_MARK_PREFIX))) = UCase$(HAMN_MARK_PREFIX) Then
+            s.Name = HAMN_ExtractOriginalNameFromMarker(s.Name)
+            cleaned = cleaned + 1
+        End If
+
+        If s.Type = cdrGroupShape Then
+            HAMN_CleanPatternMarkersInShapes s.Shapes, cleaned
+        End If
+
+        Set pcShapes = Nothing
+        Set pcShapes = s.PowerClip.Shapes
+        If Not pcShapes Is Nothing Then
+            HAMN_CleanPatternMarkersInShapes pcShapes, cleaned
+        End If
+
+    Next s
+
+End Sub
+
+
+Private Function HAMN_ExtractOriginalNameFromMarker(ByVal markerName As String) As String
+
+    Dim p() As String
+
+    p = Split(markerName, "|")
+
+    If UBound(p) >= 3 Then
+        HAMN_ExtractOriginalNameFromMarker = CStr(p(3))
+    Else
+        HAMN_ExtractOriginalNameFromMarker = ""
+    End If
 
 End Function
 
@@ -1799,7 +2008,7 @@ Private Sub HAMN_WriteReport( _
     f = FreeFile
     Open path For Output As #f
 
-    Print #f, "PROJECT HADES - AUTO MASS NESTING REPORT V3.5 ROW MAJOR 6x2"
+    Print #f, "PROJECT HADES - AUTO MASS NESTING REPORT V4 BOX-MAJOR"
     Print #f, "CREATED=" & Format$(Now, "yyyy-mm-dd hh:nn:ss")
     Print #f, "STATUS=" & statusText
     Print #f, "AUTO_RENAME=ON"
@@ -1807,13 +2016,13 @@ Private Sub HAMN_WriteReport( _
     Print #f, "AREA_WIDTH_CM=" & HAMN_DblToStr(HAMN_AREA_W)
     Print #f, "AREA_HEIGHT_CM=" & HAMN_DblToStr(HAMN_AREA_H)
     Print #f, "GAP_CM=" & HAMN_DblToStr(HAMN_GAP)
-    Print #f, "METHOD=ROW_MAJOR_6X2_BLOCK"
+    Print #f, "METHOD=BOX_MAJOR_6_BOX_HORIZONTAL"
     Print #f, "BUCKET_PRIORITY=BODY>SLEEVE>SMALL"
     Print #f, ""
     Print #f, "ORDER_RECORDS=" & CStr(orderN)
     Print #f, "TOTAL_EXPECTED_PANEL=" & CStr(expectedPanels)
     Print #f, "TOTAL_OUTPUT_PANEL=" & CStr(outN)
-    Print #f, "TOTAL_BLOCK_USED=" & CStr(areaCount)
+    Print #f, "TOTAL_BOX_USED=" & CStr(areaCount)
     Print #f, ""
     Print #f, "[AUTO RENAME SUMMARY]"
     Print #f, "NAME_REPLACED=" & CStr(totalNameR)
