@@ -2,7 +2,7 @@ Option Explicit
 
 '==========================================================
 ' PROJECT HADES
-' HADES AUTO MASS NESTING — RECORD PATTERN CATALOG V3.2 AUTO-ONLY
+' HADES AUTO MASS NESTING — RECORD PATTERN CATALOG V3.3 AUTO-ONLY + UID MARKER
 '
 ' SHORTCUT UTAMA:
 ' HADES_RECORD_PATTERN_CATALOG
@@ -10,7 +10,7 @@ Option Explicit
 ' ALIAS:
 ' HADES_RECORD_PATTERN_CATALOG_V2
 ' HADES_RECORD_PATTERN_CATALOG_V3
-' HADES_RECORD_PATTERN_CATALOG_V32
+' HADES_RECORD_PATTERN_CATALOG_V33
 '
 ' FUNGSI:
 ' - Jalankan saat master layout masih tergroup 1 group per size.
@@ -20,12 +20,14 @@ Option Explicit
 ' - Macro mendeteksi size group dari body panel yang cocok dengan SizeDB.
 ' - TANPA input size manual.
 ' - Jika auto-detect gagal, macro berhenti dan memberi detail penyebab.
+' - Memberi UID marker sementara pada Shape.Name setiap panel source.
+' - UID marker dibersihkan otomatis oleh Auto Mass Nesting V4 setelah sukses.
 '
 ' OUTPUT:
 ' Documents\HADES_PATTERN_CATALOG_CURRENT.txt
 '
 ' CATALOG FORMAT kompatibel dengan Auto Mass Nesting V3.1:
-' PANEL|SIZE|PANEL_NO|WIDTH_CM|HEIGHT_CM|COREL_TYPE|NAME|BUCKET|...
+' PANEL|SIZE|PANEL_NO|WIDTH_CM|HEIGHT_CM|COREL_TYPE|NAME|BUCKET|...|PANEL_UID|ORIGINAL_NAME
 '
 ' Field setelah BUCKET adalah tambahan coordinate signature,
 ' aman diabaikan oleh Auto Mass Nesting V3.1 lama.
@@ -43,26 +45,32 @@ Private Const HAMNREC_SIZE_MATCH_TOL As Double = 1#
 Private Const HAMNREC_BUCKET_BODY As String = "BODY"
 Private Const HAMNREC_BUCKET_SLEEVE As String = "SLEEVE"
 Private Const HAMNREC_BUCKET_SMALL As String = "SMALL"
+Private Const HAMNREC_MARK_PREFIX As String = "HADES_PC_UID|"
 
 
 Public Sub HADES_RECORD_PATTERN_CATALOG()
-    HADES_RECORD_PATTERN_CATALOG_V32
+    HADES_RECORD_PATTERN_CATALOG_V33
 End Sub
 
 Public Sub HADES_RECORD_PATTERN_CATALOG_V2()
-    HADES_RECORD_PATTERN_CATALOG_V32
+    HADES_RECORD_PATTERN_CATALOG_V33
 End Sub
 
 Public Sub HADES_RECORD_PATTERN_CATALOG_V3()
-    HADES_RECORD_PATTERN_CATALOG_V32
+    HADES_RECORD_PATTERN_CATALOG_V33
 End Sub
+
 
 Public Sub HADES_RECORD_PATTERN_CATALOG_V32()
-    HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY
+    HADES_RECORD_PATTERN_CATALOG_V33
+End Sub
+
+Public Sub HADES_RECORD_PATTERN_CATALOG_V33()
+    HADES_RECORD_PATTERN_CATALOG_V3_3_AUTOONLY
 End Sub
 
 
-Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
+Public Sub HADES_RECORD_PATTERN_CATALOG_V3_3_AUTOONLY()
 
     On Error GoTo ErrHandler
 
@@ -112,12 +120,16 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
     Dim pTop() As Double
     Dim pCX() As Double
     Dim pCY() As Double
+    Dim pShape() As Shape
+    Dim pUID() As String
+    Dim pOrigName() As String
+    Dim markerCount As Long
 
     Dim totalPanels As Long
     Dim missingOrderSizes As String
 
     If ActiveDocument Is Nothing Then
-        MsgBox "Tidak ada dokumen aktif.", vbExclamation, "Hades Record Pattern Catalog V3.2"
+        MsgBox "Tidak ada dokumen aktif.", vbExclamation, "Hades Record Pattern Catalog V3.3"
         Exit Sub
     End If
 
@@ -125,7 +137,7 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
         MsgBox "Select group master per size dulu." & vbCrLf & vbCrLf & _
                "Contoh selection:" & vbCrLf & _
                "Group S + Group M + Group L", _
-               vbExclamation, "Hades Record Pattern Catalog V3.2"
+               vbExclamation, "Hades Record Pattern Catalog V3.3"
         Exit Sub
     End If
 
@@ -208,7 +220,7 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
     f = FreeFile
     Open outPath For Output As #f
 
-    Print #f, "@VERSION=HADES_PATTERN_CATALOG_V3_2_AUTOONLY"
+    Print #f, "@VERSION=HADES_PATTERN_CATALOG_V3_3_AUTOONLY_UID_MARKER"
     Print #f, "@CREATED=" & Format$(Now, "yyyy-mm-dd hh:nn:ss")
     Print #f, "@UNIT=CM"
     Print #f, "@SOURCE=CORELDRAW_SELECTION_GROUP_PER_SIZE"
@@ -217,7 +229,7 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
     Print #f, "@ORDER_ROWS=" & CStr(orderRows)
     Print #f, "@ORDER_SIZES=" & HAMNREC_CleanField(HAMNREC_DictKeysCsv(orderSizes))
     Print #f, "@NOTE=Auto-only. No manual size input. Direct child inside each selected size group is treated as one panel."
-    Print #f, "@PANEL_FORMAT=PANEL|SIZE|PANEL_NO|WIDTH_CM|HEIGHT_CM|COREL_TYPE|NAME|BUCKET|PANEL_LEFT|PANEL_TOP|PANEL_CENTER_X|PANEL_CENTER_Y|LOCAL_CENTER_X|LOCAL_CENTER_Y|SIZEDB_SOURCE"
+    Print #f, "@PANEL_FORMAT=PANEL|SIZE|PANEL_NO|WIDTH_CM|HEIGHT_CM|COREL_TYPE|NAME|BUCKET|PANEL_LEFT|PANEL_TOP|PANEL_CENTER_X|PANEL_CENTER_Y|LOCAL_CENTER_X|LOCAL_CENTER_Y|SIZEDB_SOURCE|PANEL_UID|ORIGINAL_NAME"
     Print #f, "@BUCKET=BODY/SLEEVE/SMALL"
     Print #f, ""
 
@@ -244,17 +256,17 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
         pN = 0
 
         If grp.Type <> cdrGroupShape Then
-            HAMNREC_AddPanel pN, pW, pH, pType, pName, pBucket, pLeft, pTop, pCX, pCY, _
+            HAMNREC_AddPanel pN, pW, pH, pType, pName, pBucket, pLeft, pTop, pCX, pCY, pShape, pUID, pOrigName, _
                               grp.SizeWidth, grp.SizeHeight, CStr(grp.Type), grp.Name, HAMNREC_BUCKET_BODY, _
-                              grp.LeftX, grp.TopY, HAMNREC_CenterX(grp), HAMNREC_CenterY(grp)
+                              grp.LeftX, grp.TopY, HAMNREC_CenterX(grp), HAMNREC_CenterY(grp), grp
         Else
             For j = 1 To grp.Shapes.Count
                 Set ch = grp.Shapes(j)
 
                 If ch.SizeWidth >= HAMNREC_MIN_PANEL_W And ch.SizeHeight >= HAMNREC_MIN_PANEL_H Then
-                    HAMNREC_AddPanel pN, pW, pH, pType, pName, pBucket, pLeft, pTop, pCX, pCY, _
+                    HAMNREC_AddPanel pN, pW, pH, pType, pName, pBucket, pLeft, pTop, pCX, pCY, pShape, pUID, pOrigName, _
                                       ch.SizeWidth, ch.SizeHeight, CStr(ch.Type), ch.Name, "", _
-                                      ch.LeftX, ch.TopY, HAMNREC_CenterX(ch), HAMNREC_CenterY(ch)
+                                      ch.LeftX, ch.TopY, HAMNREC_CenterX(ch), HAMNREC_CenterY(ch), ch
                 End If
             Next j
 
@@ -263,6 +275,11 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
 
         For j = 1 To pN
             totalPanels = totalPanels + 1
+
+            pUID(j) = HAMNREC_BuildPanelUID(sz, pBucket(j), j)
+            pOrigName(j) = pName(j)
+            If HAMNREC_SetPanelMarker(pShape(j), pUID(j), pOrigName(j)) Then markerCount = markerCount + 1
+
             Print #f, "PANEL|" & sz & "|" & CStr(j) & "|" & _
                       HAMNREC_DblToStr(pW(j)) & "|" & _
                       HAMNREC_DblToStr(pH(j)) & "|" & _
@@ -275,7 +292,9 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
                       HAMNREC_DblToStr(pCY(j)) & "|" & _
                       HAMNREC_DblToStr(pCX(j) - HAMNREC_CenterX(grp)) & "|" & _
                       HAMNREC_DblToStr(pCY(j) - HAMNREC_CenterY(grp)) & "|" & _
-                      HAMNREC_CleanField(resolvedDB(i))
+                      HAMNREC_CleanField(resolvedDB(i)) & "|" & _
+                      HAMNREC_CleanField(pUID(j)) & "|" & _
+                      HAMNREC_CleanField(pOrigName(j))
         Next j
 
         Print #f, "SIZE_PANEL_COUNT|" & sz & "|" & CStr(pN)
@@ -285,6 +304,7 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
 
     Print #f, "@TOTAL_SIZE_GROUP=" & CStr(n)
     Print #f, "@TOTAL_PANEL=" & CStr(totalPanels)
+    Print #f, "@TOTAL_MARKER=" & CStr(markerCount)
 
     Close #f
 
@@ -292,10 +312,11 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
 
     ActiveDocument.Unit = oldUnit
 
-    MsgBox "Pattern Catalog V3.2 AUTO-ONLY berhasil dibuat." & vbCrLf & vbCrLf & _
+    MsgBox "Pattern Catalog V3.3 AUTO-ONLY + UID MARKER berhasil dibuat." & vbCrLf & vbCrLf & _
            "File:" & vbCrLf & outPath & vbCrLf & vbCrLf & _
            "Jumlah group size : " & n & vbCrLf & _
            "Jumlah panel      : " & totalPanels & vbCrLf & _
+           "UID marker        : " & markerCount & vbCrLf & _
            "Size source       : " & dbSource & vbCrLf & vbCrLf & _
            "Tidak ada input size manual." & vbCrLf & vbCrLf & _
            "Langkah berikutnya:" & vbCrLf & _
@@ -303,7 +324,7 @@ Public Sub HADES_RECORD_PATTERN_CATALOG_V3_2_AUTOONLY()
            "2. Jangan geser panel source." & vbCrLf & _
            "3. Select semua panel master loose." & vbCrLf & _
            "4. Jalankan HADES_AUTO_MASS_NESTING.", _
-           vbInformation, "Hades Record Pattern Catalog V3.2"
+           vbInformation, "Hades Record Pattern Catalog V3.3"
 
     Exit Sub
 
@@ -315,15 +336,15 @@ FailStop:
     MsgBox "RECORD PATTERN CATALOG GAGAL." & vbCrLf & vbCrLf & _
            hardError & vbCrLf & vbCrLf & _
            "Report:" & vbCrLf & reportPath, _
-           vbCritical, "Hades Record Pattern Catalog V3.2"
+           vbCritical, "Hades Record Pattern Catalog V3.3"
     Exit Sub
 
 ErrHandler:
     On Error Resume Next
     Close #f
     ActiveDocument.Unit = oldUnit
-    MsgBox "ERROR HADES_RECORD_PATTERN_CATALOG_V3_2:" & vbCrLf & _
-           Err.Description, vbCritical, "Hades Record Pattern Catalog V3.2"
+    MsgBox "ERROR HADES_RECORD_PATTERN_CATALOG_V3_3:" & vbCrLf & _
+           Err.Description, vbCritical, "Hades Record Pattern Catalog V3.3"
 
 End Sub
 
@@ -841,6 +862,9 @@ Private Sub HAMNREC_AddPanel( _
     ByRef pTop() As Double, _
     ByRef pCX() As Double, _
     ByRef pCY() As Double, _
+    ByRef pShape() As Shape, _
+    ByRef pUID() As String, _
+    ByRef pOrigName() As String, _
     ByVal w As Double, _
     ByVal h As Double, _
     ByVal typ As String, _
@@ -849,7 +873,8 @@ Private Sub HAMNREC_AddPanel( _
     ByVal leftX As Double, _
     ByVal topY As Double, _
     ByVal centerX As Double, _
-    ByVal centerY As Double _
+    ByVal centerY As Double, _
+    ByVal panelShape As Shape _
 )
 
     pN = pN + 1
@@ -864,6 +889,9 @@ Private Sub HAMNREC_AddPanel( _
         ReDim pTop(1 To pN)
         ReDim pCX(1 To pN)
         ReDim pCY(1 To pN)
+        ReDim pShape(1 To pN)
+        ReDim pUID(1 To pN)
+        ReDim pOrigName(1 To pN)
     Else
         ReDim Preserve pW(1 To pN)
         ReDim Preserve pH(1 To pN)
@@ -874,17 +902,23 @@ Private Sub HAMNREC_AddPanel( _
         ReDim Preserve pTop(1 To pN)
         ReDim Preserve pCX(1 To pN)
         ReDim Preserve pCY(1 To pN)
+        ReDim Preserve pShape(1 To pN)
+        ReDim Preserve pUID(1 To pN)
+        ReDim Preserve pOrigName(1 To pN)
     End If
 
     pW(pN) = w
     pH(pN) = h
     pType(pN) = typ
-    pName(pN) = nm
+    pName(pN) = HAMNREC_OriginalNameFromMaybeMarker(nm)
     pBucket(pN) = bucket
     pLeft(pN) = leftX
     pTop(pN) = topY
     pCX(pN) = centerX
     pCY(pN) = centerY
+    Set pShape(pN) = panelShape
+    pUID(pN) = ""
+    pOrigName(pN) = pName(pN)
 
 End Sub
 
@@ -1001,6 +1035,52 @@ Private Function HAMNREC_NormalizeBucket(ByVal s As String) As String
         Case Else
             HAMNREC_NormalizeBucket = HAMNREC_BUCKET_SMALL
     End Select
+
+End Function
+
+
+
+'==========================================================
+' UID MARKER HELPERS
+'==========================================================
+
+Private Function HAMNREC_BuildPanelUID(ByVal sz As String, ByVal bucket As String, ByVal panelNo As Long) As String
+    HAMNREC_BuildPanelUID = HAMNREC_NormalizeSize(sz) & "_" & HAMNREC_NormalizeBucket(bucket) & "_P" & Format$(panelNo, "000")
+End Function
+
+
+Private Function HAMNREC_SetPanelMarker(ByVal shp As Shape, ByVal uid As String, ByVal origName As String) As Boolean
+
+    On Error GoTo Fail
+
+    If shp Is Nothing Then GoTo Fail
+    If Trim$(uid) = "" Then GoTo Fail
+
+    shp.Name = HAMNREC_MARK_PREFIX & HAMNREC_CleanField(uid) & "|ORIG|" & HAMNREC_CleanField(origName)
+    HAMNREC_SetPanelMarker = True
+    Exit Function
+
+Fail:
+    HAMNREC_SetPanelMarker = False
+
+End Function
+
+
+Private Function HAMNREC_OriginalNameFromMaybeMarker(ByVal nm As String) As String
+
+    Dim p() As String
+
+    If UCase$(Left$(CStr(nm), Len(HAMNREC_MARK_PREFIX))) <> UCase$(HAMNREC_MARK_PREFIX) Then
+        HAMNREC_OriginalNameFromMaybeMarker = CStr(nm)
+        Exit Function
+    End If
+
+    p = Split(CStr(nm), "|")
+    If UBound(p) >= 3 Then
+        HAMNREC_OriginalNameFromMaybeMarker = CStr(p(3))
+    Else
+        HAMNREC_OriginalNameFromMaybeMarker = ""
+    End If
 
 End Function
 
@@ -1153,7 +1233,7 @@ Private Sub HAMNREC_WriteReport( _
     f = FreeFile
     Open reportPath For Output As #f
 
-    Print #f, "PROJECT HADES — RECORD PATTERN CATALOG V3.2 AUTO-ONLY REPORT"
+    Print #f, "PROJECT HADES — RECORD PATTERN CATALOG V3.3 AUTO-ONLY + UID MARKER REPORT"
     Print #f, "CREATED=" & Format$(Now, "yyyy-mm-dd hh:nn:ss")
     Print #f, "STATUS=" & status
     Print #f, ""
